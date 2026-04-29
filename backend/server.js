@@ -191,6 +191,10 @@ app.post(["/validate", "/api/validate"], (req, res) => {
 
 
 // 🚀 START SERVER
-app.listen(5000, () => {
+if (require.main === module) {
+    app.listen(5000, () => {
     console.log("🔥 Server is running on port 5000");
-});
+    });
+}
+
+module.exports = app;
