@@ -164,7 +164,7 @@ app.get("/", (req, res) => {
     res.send("Backend is running smoothly!"); // updated
 });
 
-app.post("/validate", (req, res) => {
+app.post(["/validate", "/api/validate"], (req, res) => {
     try {
         const { experiment, components, connections } = req.body;
 

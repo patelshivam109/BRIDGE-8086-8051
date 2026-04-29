@@ -539,7 +539,7 @@ const handleValidate = async () => {
   try {
     console.log("AI Validate clicked");
 
-    const response = await fetch("http://localhost:5000/validate", {
+    const response = await fetch("/api/validate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
