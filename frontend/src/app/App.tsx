@@ -17,11 +17,12 @@ import { DocumentationPage } from './components/DocumentationPage';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cpu } from 'lucide-react';
+import { apiRequest } from './utils/api';
 
 const AUTH_SESSION_KEY = 'bridge-86-51-auth-session';
 
 function AppContent() {
-  const { userData } = useUser();
+  const { userData, setActiveUser, clearActiveUser } = useUser();
   const [view, setView] = React.useState('landing'); 
   const [activeExp, setActiveExp] = React.useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = React.useState(() => {
@@ -59,17 +60,19 @@ function AppContent() {
     setView('lab');
   };
 
-  const onAuthSuccess = () => {
+  const onAuthSuccess = (user: { id: string; name: string; email: string; token: string }) => {
+    setActiveUser(user);
     setIsAuthenticated(true);
     setIsAuthModalOpen(false);
     setView('dashboard');
   };
 
   const handleLogout = () => {
+    void apiRequest('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setIsAuthenticated(false);
     setView('landing');
     setActiveExp(null);
-    localStorage.removeItem(AUTH_SESSION_KEY);
+    clearActiveUser();
   };
 
   const isDashboardView = isAuthenticated && view !== 'landing' && view !== 'lab';

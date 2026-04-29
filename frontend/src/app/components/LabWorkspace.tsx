@@ -24,9 +24,22 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 import { DraggableLabItem } from './DraggableLabItem';
 import { ImageWithFallback } from './shared/ImageWithFallback';
 import { CodeEditorModal } from './CodeEditorModal';
-import { supabase } from "../utils/supabase";
+import { apiRequest } from "../utils/api";
+import { useUser } from '../contexts/UserContext';
 
 const AUTH_SESSION_KEY = 'bridge-86-51-auth-session';
+
+const getActiveUserId = () => {
+  const savedSession = localStorage.getItem(AUTH_SESSION_KEY);
+  if (!savedSession) return 'guest';
+
+  try {
+    const session = JSON.parse(savedSession);
+    return String(session.email || session.id || 'guest').toLowerCase();
+  } catch {
+    return 'guest';
+  }
+};
 
 interface LabComponent {
   id: string;
@@ -442,6 +455,8 @@ function LabWorkbench({
 
 export function LabWorkspace({ expId, onBack }: { expId: string, onBack: () => void }) {
   const exp = experimentData[expId] || experimentData['F1'];
+  const { updateExperimentProgress, addLabReport, unlockAchievement } = useUser();
+  const startedAtRef = React.useRef(Date.now());
   const [completedSteps, setCompletedSteps] = React.useState<number[]>([]);
   const [isValidated, setIsValidated] = React.useState(false);
   const [placedComponents, setPlacedComponents] = React.useState<LabComponent[]>(exp.initialComponents.map(c => ({
@@ -468,9 +483,13 @@ export function LabWorkspace({ expId, onBack }: { expId: string, onBack: () => v
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   const [validationResult, setValidationResult] = React.useState<any>(null);
 
+  const progressStorageKey = React.useMemo(() => {
+    return `lab-progress-${getActiveUserId()}-${exp.id}`;
+  }, [exp.id]);
+
   // Load saved progress from localStorage on component mount
   React.useEffect(() => {
-    const savedData = localStorage.getItem(`lab-progress-${exp.id}`);
+    const savedData = localStorage.getItem(progressStorageKey);
     if (savedData) {
       try {
         const parsed = JSON.parse(savedData);
@@ -483,7 +502,7 @@ export function LabWorkspace({ expId, onBack }: { expId: string, onBack: () => v
         console.error('Failed to load saved progress:', error);
       }
     }
-  }, [exp.id]);
+  }, [progressStorageKey]);
 
   // Save progress function
   const handleSaveProgress = async () => {
@@ -498,32 +517,29 @@ export function LabWorkspace({ expId, onBack }: { expId: string, onBack: () => v
         panOffset,
       };
 
-      localStorage.setItem(`lab-progress-${exp.id}`, JSON.stringify(progressData));
+      localStorage.setItem(progressStorageKey, JSON.stringify(progressData));
 
-      // App auth is localStorage-based; sync to Supabase only when a Supabase auth user exists.
-      const { data: userData, error: authError } = await supabase.auth.getUser();
-      const user = userData.user;
+      await apiRequest('/api/progress', {
+        method: 'POST',
+        body: JSON.stringify({
+          experimentId: exp.id,
+          title: exp.title,
+          components: placedComponents,
+          wires,
+          completedSteps,
+          totalSteps: exp.setup.length,
+          isValidated,
+          timeSpent: Math.floor((Date.now() - startedAtRef.current) / 1000),
+        }),
+      });
 
-      if (authError) {
-        console.warn('Supabase auth check failed. Progress was saved locally.', authError);
-      }
-
-      const fakeUser = user || { id: "test-user-123" };
-
-      const { error: syncError } = await supabase.from("progress").insert([
-        {
-          user_id: fakeUser.id,
-          experiment_id: exp.id,
-          components: JSON.stringify(placedComponents),
-          wires: JSON.stringify(wires),
-        }
-      ]);
-
-      if (syncError) {
-        console.error("❌ FULL ERROR:", syncError);
-      } else {
-        console.log("🔥 SAVED TO SUPABASE");
-      }
+      updateExperimentProgress(exp.id, {
+        title: exp.title,
+        completedSteps,
+        totalSteps: exp.setup.length,
+        isValidated,
+        timeSpent: Math.floor((Date.now() - startedAtRef.current) / 1000),
+      });
 
       setSaveSuccess(true);
 
@@ -565,7 +581,53 @@ const handleValidate = async () => {
     console.log("🔥 Backend Response:", data);
 
     setValidationResult(data);
-setIsValidated(true);
+    setIsValidated(true);
+
+    const score = typeof data.score === 'number' ? data.score : 0;
+    const now = new Date().toISOString();
+    const timeSpent = Math.floor((Date.now() - startedAtRef.current) / 1000);
+
+    updateExperimentProgress(exp.id, {
+      title: exp.title,
+      completedSteps: [...new Set([...completedSteps, ...exp.setup.map((_, index) => index)])],
+      totalSteps: exp.setup.length,
+      isValidated: score >= 70,
+      timeSpent,
+      attemptCount: 1,
+      score,
+    });
+
+    await apiRequest('/api/progress', {
+      method: 'POST',
+      body: JSON.stringify({
+        experimentId: exp.id,
+        title: exp.title,
+        components: placedComponents,
+        wires,
+        completedSteps: [...new Set([...completedSteps, ...exp.setup.map((_, index) => index)])],
+        totalSteps: exp.setup.length,
+        isValidated: score >= 70,
+        timeSpent,
+        score,
+      }),
+    });
+
+    if (score >= 70) {
+      addLabReport({
+        id: `RPT-${exp.id}-${Date.now()}`,
+        experimentId: exp.id,
+        experimentTitle: exp.title,
+        generatedAt: now,
+        score,
+        vivaAnswers: [],
+        analysisResults: {
+          cycleEfficiency: score,
+          powerConsumption: score >= 90 ? 'Optimal' : 'Review needed',
+          busStatus: data.status === 'success' ? 'Validated' : 'Needs review',
+        },
+      });
+      unlockAchievement('first_experiment');
+    }
 
   } catch (error) {
     console.error("❌ Validation error:", error);

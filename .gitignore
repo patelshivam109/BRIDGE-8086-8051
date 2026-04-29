@@ -27,6 +27,10 @@ pnpm-debug.log*
 .parcel-cache/
 .eslintcache
 *.tsbuildinfo
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
 
 # Local editor settings
 .vscode/*

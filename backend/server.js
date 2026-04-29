@@ -1,10 +1,54 @@
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
+const { db, hashToken, publicUser, publicProgress } = require("./db");
 
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
+
+const createSession = (userId) => {
+    const token = crypto.randomBytes(32).toString("hex");
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString();
+
+    db.prepare(`
+        INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
+        VALUES (?, ?, ?, ?)
+    `).run(hashToken(token), userId, expiresAt, now.toISOString());
+
+    return token;
+};
+
+const getBearerToken = (req) => {
+    const header = req.headers.authorization || "";
+    const [scheme, token] = header.split(" ");
+    return scheme === "Bearer" && token ? token : null;
+};
+
+const requireAuth = (req, res, next) => {
+    const token = getBearerToken(req);
+    if (!token) {
+        return res.status(401).json({ message: "Authentication required" });
+    }
+
+    const row = db.prepare(`
+        SELECT users.*
+        FROM sessions
+        JOIN users ON users.id = sessions.user_id
+        WHERE sessions.token_hash = ? AND sessions.expires_at > ?
+    `).get(hashToken(token), new Date().toISOString());
+
+    if (!row) {
+        return res.status(401).json({ message: "Session expired. Please log in again." });
+    }
+
+    req.user = row;
+    req.token = token;
+    next();
+};
 
 
 // 🧠 EXPLANATION FUNCTION
@@ -162,6 +206,162 @@ function validateExperiment(experiment, components, connections) {
 
 app.get("/", (req, res) => {
     res.send("Backend is running smoothly!"); // updated
+});
+
+app.post(["/auth/signup", "/api/auth/signup"], async (req, res) => {
+    try {
+        const email = String(req.body.email || "").trim().toLowerCase();
+        const password = String(req.body.password || "");
+        const name = String(req.body.name || "").trim();
+
+        if (!email || !password || !name) {
+            return res.status(400).json({ message: "Name, email, and password are required." });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ message: "Password must be at least 6 characters." });
+        }
+
+        const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+        if (existing) {
+            return res.status(409).json({ message: "An account with this email already exists." });
+        }
+
+        const userId = crypto.randomUUID();
+        const passwordHash = await bcrypt.hash(password, 12);
+        const createdAt = new Date().toISOString();
+
+        db.prepare(`
+            INSERT INTO users (id, email, password_hash, name, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(userId, email, passwordHash, name, createdAt);
+
+        const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+        const token = createSession(userId);
+
+        res.status(201).json({ user: publicUser(user), token });
+    } catch (error) {
+        console.error("Signup error:", error);
+        res.status(500).json({ message: "Could not create account." });
+    }
+});
+
+app.post(["/auth/login", "/api/auth/login"], async (req, res) => {
+    try {
+        const email = String(req.body.email || "").trim().toLowerCase();
+        const password = String(req.body.password || "");
+
+        if (!email || !password) {
+            return res.status(400).json({ message: "Email and password are required." });
+        }
+
+        const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+        if (!user) {
+            return res.status(401).json({ message: "Invalid email or password." });
+        }
+
+        const isValid = await bcrypt.compare(password, user.password_hash);
+        if (!isValid) {
+            return res.status(401).json({ message: "Invalid email or password." });
+        }
+
+        const token = createSession(user.id);
+        res.json({ user: publicUser(user), token });
+    } catch (error) {
+        console.error("Login error:", error);
+        res.status(500).json({ message: "Could not log in." });
+    }
+});
+
+app.get(["/auth/me", "/api/auth/me"], requireAuth, (req, res) => {
+    res.json({ user: publicUser(req.user) });
+});
+
+app.post(["/auth/logout", "/api/auth/logout"], requireAuth, (req, res) => {
+    db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(req.token));
+    res.json({ ok: true });
+});
+
+app.patch(["/users/me", "/api/users/me"], requireAuth, (req, res) => {
+    const name = String(req.body.name ?? req.user.name).trim();
+    const institution = String(req.body.institution ?? req.user.institution ?? "").trim();
+    const rollNumber = String(req.body.rollNumber ?? req.user.roll_number ?? "").trim();
+    const avatar = req.body.avatar ? String(req.body.avatar) : req.user.avatar;
+
+    if (!name) {
+        return res.status(400).json({ message: "Name is required." });
+    }
+
+    db.prepare(`
+        UPDATE users
+        SET name = ?, institution = ?, roll_number = ?, avatar = ?
+        WHERE id = ?
+    `).run(name, institution, rollNumber, avatar, req.user.id);
+
+    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+    res.json({ user: publicUser(user) });
+});
+
+app.post(["/progress", "/api/progress"], requireAuth, (req, res) => {
+    const experimentId = String(req.body.experimentId || "");
+    if (!experimentId) {
+        return res.status(400).json({ message: "Experiment id is required." });
+    }
+
+    const id = crypto.randomUUID();
+    const updatedAt = new Date().toISOString();
+    const components = JSON.stringify(req.body.components || []);
+    const wires = JSON.stringify(req.body.wires || []);
+    const title = String(req.body.title || experimentId);
+    const completedSteps = JSON.stringify(req.body.completedSteps || []);
+    const totalSteps = Number(req.body.totalSteps || 0);
+    const isValidated = req.body.isValidated ? 1 : 0;
+    const timeSpent = Number(req.body.timeSpent || 0);
+    const score = typeof req.body.score === "number" ? req.body.score : null;
+
+    db.prepare(`
+        INSERT INTO progress (
+          id, user_id, experiment_id, components, wires, title,
+          completed_steps, total_steps, is_validated, time_spent, score, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, experiment_id) DO UPDATE SET
+          components = excluded.components,
+          wires = excluded.wires,
+          title = excluded.title,
+          completed_steps = excluded.completed_steps,
+          total_steps = excluded.total_steps,
+          is_validated = excluded.is_validated,
+          time_spent = excluded.time_spent,
+          score = excluded.score,
+          updated_at = excluded.updated_at
+    `).run(
+        id,
+        req.user.id,
+        experimentId,
+        components,
+        wires,
+        title,
+        completedSteps,
+        totalSteps,
+        isValidated,
+        timeSpent,
+        score,
+        updatedAt
+    );
+
+    res.json({ ok: true });
+});
+
+app.get(["/progress", "/api/progress"], requireAuth, (req, res) => {
+    const rows = db.prepare(`
+        SELECT *
+        FROM progress
+        WHERE user_id = ?
+        ORDER BY updated_at DESC
+    `).all(req.user.id);
+
+    res.json({ progress: rows.map(publicProgress) });
 });
 
 app.post(["/validate", "/api/validate"], (req, res) => {

@@ -1,9 +1,11 @@
 {
 	"folders": [
 		{
-			"path": "../Downloads/Bridge-86-51"
+			"name": "frontend",
+			"path": "../frontend"
 		},
 		{
+			"name": "backend",
 			"path": "."
 		}
 	],

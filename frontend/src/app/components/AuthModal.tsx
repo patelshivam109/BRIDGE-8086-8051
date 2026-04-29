@@ -1,10 +1,23 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cpu, X, LogIn, Mail, Lock, ShieldCheck, UserPlus, User, Eye, EyeOff } from 'lucide-react';
+import { apiRequest } from '../utils/api';
 
 const AUTH_SESSION_KEY = 'bridge-86-51-auth-session';
 
-export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }: { isOpen: boolean, onClose: () => void, onSuccess: () => void, initialMode?: 'signin' | 'signup' }) {
+interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  token: string;
+  avatar?: string;
+  institution?: string;
+  rollNumber?: string;
+  role?: string;
+  joinedAt?: string;
+}
+
+export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }: { isOpen: boolean, onClose: () => void, onSuccess: (user: AuthUser) => void, initialMode?: 'signin' | 'signup' }) {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [mode, setMode] = React.useState<'signin' | 'signup'>(initialMode);
@@ -14,15 +27,18 @@ export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
   const [showForgotPassword, setShowForgotPassword] = React.useState(false);
   const [resetEmail, setResetEmail] = React.useState('');
+  const [errorMessage, setErrorMessage] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   React.useEffect(() => {
     setMode(initialMode);
+    setErrorMessage('');
   }, [initialMode]);
 
-  const handleForgotPassword = () => {
-    if (resetEmail) {
-      // Simulate password reset email sent
-      alert(`Password reset instructions have been sent to ${resetEmail}`);
+  const handleForgotPassword = async () => {
+    const trimmedEmail = resetEmail.trim().toLowerCase();
+    if (trimmedEmail) {
+      alert(`Password reset is not enabled for local SQLite accounts yet. Please contact the lab administrator for ${trimmedEmail}.`);
       setShowForgotPassword(false);
       setResetEmail('');
     } else {
@@ -30,21 +46,60 @@ export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }
     }
   };
 
-  const handleAuthSuccess = () => {
-    const sessionName = mode === 'signup' && fullName.trim()
-      ? fullName.trim()
-      : email.split('@')[0] || 'Student';
+  const handleAuthSuccess = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedName = fullName.trim();
 
-    const sessionEmail = email.trim() || `${sessionName.toLowerCase().replace(/\s+/g, '.')}@university.edu`;
+    setErrorMessage('');
 
-    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
-      id: `local-${sessionEmail}-${Date.now()}`,
-      name: sessionName,
-      email: sessionEmail,
-      mode,
-    }));
+    if (!trimmedEmail || !password) {
+      setErrorMessage('Please enter your email and password.');
+      return;
+    }
 
-    onSuccess();
+    if (mode === 'signup' && !trimmedName) {
+      setErrorMessage('Please enter your full name.');
+      return;
+    }
+
+    if (mode === 'signup' && password !== confirmPassword) {
+      setErrorMessage('Passwords do not match.');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      const authResult = mode === 'signin'
+        ? await apiRequest<{ user: Omit<AuthUser, 'token'>; token: string }>('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({
+              email: trimmedEmail,
+              password,
+            }),
+          })
+        : await apiRequest<{ user: Omit<AuthUser, 'token'>; token: string }>('/api/auth/signup', {
+            method: 'POST',
+            body: JSON.stringify({
+              email: trimmedEmail,
+              password,
+              name: trimmedName,
+            }),
+          });
+
+      const user = {
+        ...authResult.user,
+        token: authResult.token,
+      };
+
+      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(user));
+
+      onSuccess(user);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Authentication failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -197,9 +252,12 @@ export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }
 
             <button 
               onClick={handleAuthSuccess}
+              disabled={isSubmitting}
               className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-extrabold shadow-xl shadow-blue-100 transition-all flex items-center justify-center gap-2 group"
             >
-              {mode === 'signin' ? (
+              {isSubmitting ? (
+                'Please wait...'
+              ) : mode === 'signin' ? (
                 <>
                   <ShieldCheck size={20} />
                   Verify & Enter Lab
@@ -212,8 +270,18 @@ export function AuthModal({ isOpen, onClose, onSuccess, initialMode = 'signin' }
               )}
             </button>
 
+            {errorMessage && (
+              <p className="text-sm font-semibold text-red-600 text-center">{errorMessage}</p>
+            )}
+
             <div className="text-center">
-              <button className="text-xs font-bold text-slate-400 hover:text-blue-600 transition-colors">
+              <button
+                onClick={() => {
+                  setMode(mode === 'signin' ? 'signup' : 'signin');
+                  setErrorMessage('');
+                }}
+                className="text-xs font-bold text-slate-400 hover:text-blue-600 transition-colors"
+              >
                 {mode === 'signin' ? 'Need help with your access key?' : 'Already have an account?'}
               </button>
             </div>

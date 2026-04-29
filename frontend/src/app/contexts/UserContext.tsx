@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { apiRequest } from '../utils/api';
 
 interface UserSettings {
   theme: 'light' | 'dark';
@@ -28,6 +29,7 @@ interface ExperimentProgress {
   lastModified: string;
   timeSpent: number; // in seconds
   attemptCount: number;
+  score?: number;
 }
 
 interface LabReport {
@@ -61,8 +63,23 @@ interface UserData {
   joinedAt: string;
 }
 
+interface AuthSession {
+  id: string;
+  name: string;
+  email: string;
+  token: string;
+  avatar?: string;
+  institution?: string;
+  rollNumber?: string;
+  role?: string;
+  joinedAt?: string;
+}
+
 interface UserContextType {
   userData: UserData;
+  activeUser: AuthSession | null;
+  setActiveUser: (user: AuthSession) => void;
+  clearActiveUser: () => void;
   updateSettings: (settings: Partial<UserSettings>) => void;
   updateUserData: (data: Partial<UserData>) => void;
   unlockAchievement: (achievementId: string) => void;
@@ -70,6 +87,9 @@ interface UserContextType {
   addLabReport: (report: LabReport) => void;
   resetAllData: () => void;
 }
+
+const AUTH_SESSION_KEY = 'bridge-86-51-auth-session';
+const USER_DATA_PREFIX = 'bridge-86-51-user-data';
 
 const defaultSettings: UserSettings = {
   theme: 'light',
@@ -177,36 +197,153 @@ const defaultUserData: UserData = {
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
-export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [userData, setUserData] = useState<UserData>(() => {
-    const saved = localStorage.getItem('bridge-86-51-user-data');
-    if (saved) {
-      try {
-        const parsedData = JSON.parse(saved);
-        
-        // Auto-migration: Update avatar if it's still using old Unsplash URL
-        if (parsedData.avatar && parsedData.avatar.includes('unsplash.com')) {
-          parsedData.avatar = 'https://raw.githubusercontent.com/shubuexe/pt-assets/main/WhatsApp%20Image%202026-03-16%20at%2000.10.11.jpeg';
-        }
-        
-        // Auto-migration: Update name if it's still using old names
-        if (parsedData.name === 'Alex Chen' || parsedData.name === 'John Doe') {
-          parsedData.name = 'Shivam Patel';
-          parsedData.email = 'shivam.patel@university.edu';
-        }
-        
-        return parsedData;
-      } catch {
-        return defaultUserData;
-      }
+const getStoredSession = (): AuthSession | null => {
+  const saved = localStorage.getItem(AUTH_SESSION_KEY);
+  if (!saved) return null;
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (!parsed?.email) return null;
+
+    return {
+      id: String(parsed.id || parsed.email),
+      name: String(parsed.name || parsed.email.split('@')[0] || 'Student'),
+      email: String(parsed.email).toLowerCase(),
+      token: String(parsed.token || ''),
+      avatar: parsed.avatar,
+      institution: parsed.institution,
+      rollNumber: parsed.rollNumber,
+      role: parsed.role,
+      joinedAt: parsed.joinedAt,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const getUserStorageKey = (user: AuthSession | null) => {
+  return user ? `${USER_DATA_PREFIX}:${user.email}` : USER_DATA_PREFIX;
+};
+
+const createUserData = (user: AuthSession | null): UserData => {
+  if (!user) return defaultUserData;
+
+  return {
+    ...defaultUserData,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar || undefined,
+    enrollmentId: '',
+    rollNumber: user.rollNumber || '',
+    institution: user.institution || '',
+    role: user.role || 'Student',
+    achievements: defaultAchievements,
+    experimentsProgress: {},
+    labReports: [],
+    totalTimeSpent: 0,
+    joinedAt: user.joinedAt || new Date().toISOString(),
+  };
+};
+
+const loadUserData = (user: AuthSession | null): UserData => {
+  const saved = localStorage.getItem(getUserStorageKey(user));
+  if (!saved) return createUserData(user);
+
+  try {
+    const parsedData = JSON.parse(saved);
+
+    if (parsedData.avatar && parsedData.avatar.includes('unsplash.com')) {
+      parsedData.avatar = defaultUserData.avatar;
     }
-    return defaultUserData;
-  });
+
+    if (user) {
+      parsedData.name = parsedData.name || user.name;
+      parsedData.email = user.email;
+    } else if (parsedData.name === 'Alex Chen' || parsedData.name === 'John Doe') {
+      parsedData.name = defaultUserData.name;
+      parsedData.email = defaultUserData.email;
+    }
+
+    return {
+      ...createUserData(user),
+      ...parsedData,
+      settings: { ...defaultSettings, ...parsedData.settings },
+      achievements: parsedData.achievements || defaultAchievements,
+      experimentsProgress: parsedData.experimentsProgress || {},
+      labReports: parsedData.labReports || [],
+    };
+  } catch {
+    return createUserData(user);
+  }
+};
+
+export function UserProvider({ children }: { children: React.ReactNode }) {
+  const [activeUser, setActiveUserState] = useState<AuthSession | null>(() => getStoredSession());
+  const [userData, setUserData] = useState<UserData>(() => loadUserData(getStoredSession()));
+
+  const setActiveUser = (user: AuthSession) => {
+    const normalizedUser = {
+      ...user,
+      email: user.email.toLowerCase(),
+      name: user.name || user.email.split('@')[0] || 'Student',
+    };
+
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(normalizedUser));
+    setActiveUserState(normalizedUser);
+    setUserData(loadUserData(normalizedUser));
+  };
+
+  useEffect(() => {
+    if (!activeUser?.token) return;
+
+    apiRequest<{ user: AuthSession }>('/api/auth/me')
+      .then(({ user }) => {
+        const refreshedUser = {
+          ...activeUser,
+          ...user,
+          token: activeUser.token,
+        };
+
+        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(refreshedUser));
+        setActiveUserState(refreshedUser);
+        setUserData(prev => ({
+          ...prev,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar || prev.avatar,
+          institution: user.institution || '',
+          rollNumber: user.rollNumber || '',
+          role: user.role || 'Student',
+          joinedAt: user.joinedAt || prev.joinedAt,
+        }));
+      })
+      .catch(() => clearActiveUser());
+
+    apiRequest<{ progress: ExperimentProgress[] }>('/api/progress')
+      .then(({ progress }) => {
+        setUserData(prev => ({
+          ...prev,
+          experimentsProgress: progress.reduce<Record<string, ExperimentProgress>>((acc, item) => {
+            acc[item.id] = item;
+            return acc;
+          }, {}),
+        }));
+      })
+      .catch(error => {
+        console.error('Progress sync failed:', error);
+      });
+  }, []);
+
+  const clearActiveUser = () => {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    setActiveUserState(null);
+    setUserData(loadUserData(null));
+  };
 
   // Save to localStorage whenever userData changes
   useEffect(() => {
-    localStorage.setItem('bridge-86-51-user-data', JSON.stringify(userData));
-  }, [userData]);
+    localStorage.setItem(getUserStorageKey(activeUser), JSON.stringify(userData));
+  }, [activeUser, userData]);
 
   const updateSettings = (settings: Partial<UserSettings>) => {
     setUserData(prev => ({
@@ -220,6 +357,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       ...prev,
       ...data
     }));
+
+    if (activeUser) {
+      void apiRequest<{ user: AuthSession }>('/api/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: data.name ?? userData.name,
+          institution: data.institution ?? userData.institution,
+          rollNumber: data.rollNumber ?? userData.rollNumber,
+          avatar: data.avatar ?? userData.avatar,
+        }),
+      }).then(({ user }) => {
+        const updatedSession = {
+          ...activeUser,
+          ...user,
+          token: activeUser.token,
+        };
+
+        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(updatedSession));
+        setActiveUserState(updatedSession);
+      }).catch(error => {
+        console.error('Profile sync failed:', error);
+      });
+    }
   };
 
   const unlockAchievement = (achievementId: string) => {
@@ -259,18 +419,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const addLabReport = (report: LabReport) => {
     setUserData(prev => ({
       ...prev,
-      labReports: [report, ...prev.labReports]
+      labReports: [report, ...prev.labReports.filter(item => item.experimentId !== report.experimentId)]
     }));
   };
 
   const resetAllData = () => {
-    setUserData(defaultUserData);
-    localStorage.removeItem('bridge-86-51-user-data');
+    localStorage.removeItem(getUserStorageKey(activeUser));
+    setUserData(createUserData(activeUser));
   };
 
   return (
     <UserContext.Provider value={{
       userData,
+      activeUser,
+      setActiveUser,
+      clearActiveUser,
       updateSettings,
       updateUserData,
       unlockAchievement,

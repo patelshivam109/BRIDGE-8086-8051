@@ -19,6 +19,48 @@ import { useUser } from '../contexts/UserContext';
 export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperiment }: { onSelectTrack: (track: string) => void, onNavigate: (page: string) => void, onSelectExperiment?: (id: string) => void }) {
   const { userData } = useUser();
 
+  const experimentTitles: Record<string, string> = {
+    F1: 'External Memory Interfacing',
+    F2: 'I/O Expansion via 8255 PPI',
+    F3: 'Timing & Delay with 8254 PIT',
+    F4: 'Vector Interrupts with 8259 PIC',
+    R1: 'External RAM Interfacing',
+    R2: 'Serial UART Decomposition',
+    R3: 'Port Expansion vs Native I/O',
+    R4: 'Timer Modularization',
+    U1: 'Microprocessor to Microcontroller Converter Lab',
+  };
+
+  const totalExperiments = Object.keys(experimentTitles).length;
+  const progressEntries = Object.values(userData.experimentsProgress || {});
+  const completedCount = progressEntries.filter(progress => progress.isValidated).length;
+  const totalSeconds = progressEntries.reduce((sum, progress) => sum + (progress.timeSpent || 0), 0);
+  const labHours = totalSeconds / 3600;
+  const progressScores = progressEntries
+    .map(progress => progress.score)
+    .filter((score): score is number => typeof score === 'number');
+  const averageAccuracy = userData.labReports.length
+    ? Math.round(userData.labReports.reduce((sum, report) => sum + report.score, 0) / userData.labReports.length)
+    : progressScores.length
+      ? Math.round(progressScores.reduce((sum, score) => sum + score, 0) / progressScores.length)
+    : 0;
+  const pendingReports = Math.max(0, completedCount - userData.labReports.length);
+  const progressPercent = totalExperiments ? Math.round((completedCount / totalExperiments) * 100) : 0;
+
+  const recentExperiments = progressEntries
+    .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime())
+    .slice(0, 3)
+    .map(progress => {
+      const report = userData.labReports.find(item => item.experimentId === progress.id);
+      return {
+        name: progress.title || experimentTitles[progress.id] || progress.id,
+        date: new Date(progress.lastModified).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        score: report ? `${report.score}/100` : progress.isValidated ? 'Validated' : 'In progress',
+        type: progress.id.startsWith('R') ? 'Reverse' : 'Forward',
+        id: progress.id,
+      };
+    });
+
   const handleStatClick = (title: string) => {
     if (title === 'Experiments Completed') {
       onNavigate('experiments');
@@ -31,23 +73,10 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
     }
   };
 
-  const stats = [
-    { label: 'Experiments Completed', value: '8/16', icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50' },
-    { label: 'Lab Hours Logged', value: '42.5h', icon: Clock, color: 'text-blue-500', bg: 'bg-blue-50' },
-    { label: 'Average Accuracy', value: '94%', icon: Target, color: 'text-indigo-500', bg: 'bg-indigo-50' },
-    { label: 'Pending Reports', value: '3', icon: AlertCircle, color: 'text-rose-500', bg: 'bg-rose-50' },
-  ];
-
-  const recentExperiments = [
-    { name: 'External Memory Interfacing', date: 'Yesterday, 4:30 PM', score: '98/100', type: 'Forward', id: 'F1' },
-    { name: 'Internal RAM Extraction', date: 'Feb 18, 2026', score: '92/100', type: 'Reverse', id: 'R1' },
-    { name: 'Timer Integration', date: 'Feb 15, 2026', score: '89/100', type: 'Forward', id: 'F3' },
-  ];
-
   const statsCards = [
     {
       title: 'Experiments Completed',
-      value: '8/16',
+      value: `${completedCount}/${totalExperiments}`,
       icon: CheckCircle2,
       iconColor: 'text-emerald-500 dark:text-emerald-400',
       iconBg: 'bg-emerald-50 dark:bg-emerald-900/30',
@@ -59,7 +88,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
     },
     {
       title: 'Lab Hours Logged',
-      value: '42.5h',
+      value: `${labHours.toFixed(1)}h`,
       icon: Clock,
       iconColor: 'text-blue-500 dark:text-blue-400',
       iconBg: 'bg-blue-50 dark:bg-blue-900/30',
@@ -71,7 +100,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
     },
     {
       title: 'Average Accuracy',
-      value: '94%',
+      value: `${averageAccuracy}%`,
       icon: Target,
       iconColor: 'text-indigo-500 dark:text-indigo-400',
       iconBg: 'bg-indigo-50 dark:bg-indigo-900/30',
@@ -83,7 +112,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
     },
     {
       title: 'Pending Reports',
-      value: '3',
+      value: String(pendingReports),
       icon: AlertCircle,
       iconColor: 'text-rose-500 dark:text-rose-400',
       iconBg: 'bg-rose-50 dark:bg-rose-900/30',
@@ -133,9 +162,9 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
               <CheckCircle2 className="text-emerald-500 dark:text-emerald-400" size={32} />
             </div>
             <div>
-              <div className="text-6xl font-black text-emerald-500 dark:text-emerald-400 mb-3">8/16</div>
+              <div className="text-6xl font-black text-emerald-500 dark:text-emerald-400 mb-3">{completedCount}/{totalExperiments}</div>
               <h3 className="text-lg font-bold text-emerald-700 dark:text-emerald-300">Experiments Completed</h3>
-              <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium mt-1">50% Progress</p>
+              <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium mt-1">{progressPercent}% Progress</p>
             </div>
           </div>
         </motion.div>
@@ -152,7 +181,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
             <div className="bg-blue-50 dark:bg-blue-900/30 w-14 h-14 rounded-2xl flex items-center justify-center">
               <Clock className="text-blue-500 dark:text-blue-400" size={28} />
             </div>
-            <span className="text-4xl font-black text-blue-500 dark:text-blue-400">42.5h</span>
+            <span className="text-4xl font-black text-blue-500 dark:text-blue-400">{labHours.toFixed(1)}h</span>
           </div>
           <h3 className="text-sm font-bold text-blue-700 dark:text-blue-300">Lab Hours Logged</h3>
         </motion.div>
@@ -169,7 +198,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
             <div className="bg-indigo-50 dark:bg-indigo-900/30 w-14 h-14 rounded-2xl flex items-center justify-center">
               <Target className="text-indigo-500 dark:text-indigo-400" size={28} />
             </div>
-            <span className="text-4xl font-black text-indigo-500 dark:text-indigo-400">94%</span>
+            <span className="text-4xl font-black text-indigo-500 dark:text-indigo-400">{averageAccuracy}%</span>
           </div>
           <h3 className="text-sm font-bold text-indigo-700 dark:text-indigo-300">Average Accuracy</h3>
         </motion.div>
@@ -186,7 +215,7 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
             <div className="bg-rose-50 dark:bg-rose-900/30 w-14 h-14 rounded-2xl flex items-center justify-center">
               <AlertCircle className="text-rose-500 dark:text-rose-400" size={28} />
             </div>
-            <span className="text-4xl font-black text-rose-500 dark:text-rose-400">3</span>
+            <span className="text-4xl font-black text-rose-500 dark:text-rose-400">{pendingReports}</span>
           </div>
           <h3 className="text-sm font-bold text-rose-700 dark:text-rose-300">Pending Reports</h3>
         </motion.div>
@@ -206,7 +235,12 @@ export function DashboardOverview({ onSelectTrack, onNavigate, onSelectExperimen
             </button>
           </div>
           <div className="space-y-4">
-            {recentExperiments.map((exp, i) => (
+            {recentExperiments.length === 0 ? (
+              <div className="p-8 bg-slate-50 dark:bg-slate-900/50 rounded-[2rem] border border-dashed border-slate-200 dark:border-slate-700 text-center">
+                <p className="text-sm font-bold text-slate-500 dark:text-slate-400">No experiment history yet.</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Start a lab and save progress to build your dashboard.</p>
+              </div>
+            ) : recentExperiments.map((exp, i) => (
               <div key={i} className="flex items-center justify-between p-5 bg-slate-50 dark:bg-slate-900/50 rounded-[2rem] border border-slate-100 dark:border-slate-700 group hover:border-blue-200 dark:hover:border-blue-700 transition-colors cursor-pointer" onClick={() => onSelectExperiment && onSelectExperiment(exp.id)}>
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center border border-slate-100 dark:border-slate-700 shadow-sm">

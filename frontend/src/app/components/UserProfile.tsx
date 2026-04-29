@@ -84,19 +84,30 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
     )
   );
 
-  const stats = [
-    { icon: CheckCircle2, value: '85%', label: 'Completion', bg: 'bg-emerald-100', color: 'text-emerald-700' },
-    { icon: Cpu, value: '12', label: 'Experiments', bg: 'bg-blue-100', color: 'text-blue-700' },
-    { icon: Award, value: '3', label: 'Achievements', bg: 'bg-indigo-100', color: 'text-indigo-700' },
-    { icon: History, value: '5', label: 'History', bg: 'bg-slate-100', color: 'text-slate-600' },
-  ];
+  const progressEntries = Object.values(userData.experimentsProgress || {});
+  const completedExperiments = progressEntries.filter(progress => progress.isValidated).length;
+  const unlockedAchievements = userData.achievements.filter(achievement => achievement.unlockedAtAt).length;
+  const totalHours = progressEntries.reduce((sum, progress) => sum + (progress.timeSpent || 0), 0) / 3600;
+  const recentActivities = progressEntries
+    .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime())
+    .slice(0, 5)
+    .map(progress => ({
+      title: progress.title || progress.id,
+      date: new Date(progress.lastModified).toLocaleDateString(),
+      status: progress.isValidated ? 'Validated' : 'In Progress',
+    }));
+  const forwardTotal = progressEntries.filter(progress => progress.id.startsWith('F')).length;
+  const forwardCompleted = progressEntries.filter(progress => progress.id.startsWith('F') && progress.isValidated).length;
+  const reverseTotal = progressEntries.filter(progress => progress.id.startsWith('R')).length;
+  const reverseCompleted = progressEntries.filter(progress => progress.id.startsWith('R') && progress.isValidated).length;
+  const forwardPercent = forwardTotal ? Math.round((forwardCompleted / forwardTotal) * 100) : 0;
+  const reversePercent = reverseTotal ? Math.round((reverseCompleted / reverseTotal) * 100) : 0;
 
-  const recentActivities = [
-    { title: 'Cache Controller Integration Lab', date: '2023-10-15', status: 'Passed' },
-    { title: 'Decomposing Serial Communication Block', date: '2023-10-10', status: 'Failed' },
-    { title: 'Implementing Interrupts in 8086', date: '2023-09-25', status: 'Passed' },
-    { title: 'Testing Timer Interrupts in 8051', date: '2023-09-20', status: 'Passed' },
-    { title: 'Debugging Memory Access in 8086', date: '2023-09-15', status: 'Passed' },
+  const stats = [
+    { icon: CheckCircle2, value: `${profileCompletion}%`, label: 'Profile', bg: 'bg-emerald-100', color: 'text-emerald-700' },
+    { icon: Cpu, value: String(completedExperiments), label: 'Experiments', bg: 'bg-blue-100', color: 'text-blue-700' },
+    { icon: Award, value: String(unlockedAchievements), label: 'Achievements', bg: 'bg-indigo-100', color: 'text-indigo-700' },
+    { icon: History, value: `${totalHours.toFixed(1)}h`, label: 'Lab Time', bg: 'bg-slate-100', color: 'text-slate-600' },
   ];
 
   return (
@@ -301,7 +312,12 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
                       </CardHeader>
                       <CardContent className="px-0">
                         <div className="divide-y divide-slate-100 dark:divide-slate-700">
-                          {recentActivities.map((activity, i) => (
+                          {recentActivities.length === 0 ? (
+                            <div className="px-6 py-10 text-center">
+                              <p className="text-sm font-bold text-slate-500 dark:text-slate-400">No activity yet</p>
+                              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Saved experiments will appear here.</p>
+                            </div>
+                          ) : recentActivities.map((activity, i) => (
                             <div key={i} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                               <div className="flex items-center gap-4">
                                 <div className="p-2 bg-slate-100 dark:bg-slate-700 rounded-lg">
@@ -312,8 +328,8 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
                                   <div className="text-xs text-slate-500 dark:text-slate-400">{activity.date}</div>
                                 </div>
                               </div>
-                              <Badge variant={activity.status === 'Passed' ? 'default' : 'secondary'} 
-                                     className={activity.status === 'Passed' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}>
+                              <Badge variant={activity.status === 'Validated' ? 'default' : 'secondary'} 
+                                     className={activity.status === 'Validated' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}>
                                 {activity.status}
                               </Badge>
                             </div>
@@ -336,12 +352,12 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
                               </div>
                               <span className="font-bold text-slate-900 dark:text-white">Forward Experiments (8086)</span>
                             </div>
-                            <span className="text-sm font-bold text-blue-700 dark:text-blue-400">8/10 Complete</span>
+                            <span className="text-sm font-bold text-blue-700 dark:text-blue-400">{forwardCompleted}/{Math.max(forwardTotal, 4)} Complete</span>
                           </div>
                           <div className="h-2 bg-white/50 dark:bg-slate-700/50 rounded-full overflow-hidden mb-2">
-                            <div className="h-full bg-blue-600 dark:bg-blue-500 w-[80%]" />
+                            <div className="h-full bg-blue-600 dark:bg-blue-500" style={{ width: `${forwardPercent}%` }} />
                           </div>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Next: Cache Controller Integration Lab</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{forwardCompleted === 0 ? 'No forward experiments completed yet' : 'Forward track progress is based on your saved validations'}</p>
                         </div>
 
                         <div className="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 rounded-3xl border border-indigo-100 dark:border-indigo-800">
@@ -352,12 +368,12 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
                               </div>
                               <span className="font-bold text-slate-900 dark:text-white">Reverse Experiments (8051)</span>
                             </div>
-                            <span className="text-sm font-bold text-indigo-700 dark:text-indigo-400">2/10 Complete</span>
+                            <span className="text-sm font-bold text-indigo-700 dark:text-indigo-400">{reverseCompleted}/{Math.max(reverseTotal, 4)} Complete</span>
                           </div>
                           <div className="h-2 bg-white/50 dark:bg-slate-700/50 rounded-full overflow-hidden mb-2">
-                            <div className="h-full bg-indigo-600 dark:bg-indigo-500 w-[20%]" />
+                            <div className="h-full bg-indigo-600 dark:bg-indigo-500" style={{ width: `${reversePercent}%` }} />
                           </div>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Next: Decomposing Serial Communication Block</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{reverseCompleted === 0 ? 'No reverse experiments completed yet' : 'Reverse track progress is based on your saved validations'}</p>
                         </div>
                       </CardContent>
                     </Card>
@@ -419,70 +435,28 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      { 
-                        title: 'First Experiment', 
-                        description: 'Complete your first experiment', 
-                        unlocked: true,
-                        icon: '🎯',
-                        color: 'from-blue-500 to-cyan-500'
-                      },
-                      { 
-                        title: 'Perfect Score', 
-                        description: 'Get 100% on any experiment', 
-                        unlocked: true,
-                        icon: '⭐',
-                        color: 'from-yellow-500 to-orange-500'
-                      },
-                      { 
-                        title: 'Speed Runner', 
-                        description: 'Complete an experiment in under 10 minutes', 
-                        unlocked: true,
-                        icon: '⚡',
-                        color: 'from-purple-500 to-pink-500'
-                      },
-                      { 
-                        title: 'Team Player', 
-                        description: 'Complete 5 collaborative experiments', 
-                        unlocked: false,
-                        icon: '🤝',
-                        color: 'from-emerald-500 to-teal-500'
-                      },
-                      { 
-                        title: 'Master Architect', 
-                        description: 'Complete all 9 experiments', 
-                        unlocked: false,
-                        icon: '🏆',
-                        color: 'from-rose-500 to-red-500'
-                      },
-                      { 
-                        title: 'Documentation Expert', 
-                        description: 'Write comprehensive lab reports for 10 experiments', 
-                        unlocked: false,
-                        icon: '📚',
-                        color: 'from-indigo-500 to-blue-500'
-                      },
-                    ].map((achievement, i) => (
+                    {userData.achievements.map((achievement, i) => (
+
                       <div 
                         key={i} 
                         className={`p-6 rounded-2xl border transition-all ${
-                          achievement.unlocked 
-                            ? 'bg-gradient-to-br ' + achievement.color + ' border-transparent text-white shadow-lg' 
+                          achievement.unlockedAt 
+                            ? 'bg-gradient-to-br ' + 'from-blue-500 to-cyan-500' + ' border-transparent text-white shadow-lg' 
                             : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 opacity-60'
                         }`}
                       >
                         <div className="flex items-start gap-4">
-                          <div className={`text-4xl ${achievement.unlocked ? 'scale-110' : 'grayscale'}`}>
+                          <div className={`text-4xl ${achievement.unlockedAt ? 'scale-110' : 'grayscale'}`}>
                             {achievement.icon}
                           </div>
                           <div className="flex-1">
-                            <div className={`font-bold mb-1 ${achievement.unlocked ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                            <div className={`font-bold mb-1 ${achievement.unlockedAt ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
                               {achievement.title}
                             </div>
-                            <div className={`text-sm ${achievement.unlocked ? 'text-white/90' : 'text-slate-500 dark:text-slate-400'}`}>
+                            <div className={`text-sm ${achievement.unlockedAt ? 'text-white/90' : 'text-slate-500 dark:text-slate-400'}`}>
                               {achievement.description}
                             </div>
-                            {achievement.unlocked && (
+                            {achievement.unlockedAt && (
                               <Badge className="mt-2 bg-white/20 hover:bg-white/30 text-white border-white/40">
                                 Unlocked
                               </Badge>
@@ -501,3 +475,4 @@ export function UserProfile({ onLogout, onBack, initialTab = 'profile' }: UserPr
     </div>
   );
 }
+
